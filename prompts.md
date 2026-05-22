@@ -65,3 +65,45 @@ This file contains the core prompts used during development.
 >    - Mount the Swagger UI at the `/api` route using `SwaggerModule.setup()`.
 > 
 > Ensure all necessary modules (`DocumentBuilder`, `SwaggerModule`) are imported correctly from `@nestjs/swagger`.
+
+## Auth
+     1. Create a new `AuthModule` to handle JWT-based authentication. Please follow these exact steps:
+
+1. Create `src/auth/dto/login.dto.ts` with `username` and `password` (use class-validator and Swagger decorators).
+2. Create `src/auth/auth.service.ts`:
+   - Inject `UsersService` and `JwtService`.
+   - Create a `login` method that validates the user via `UsersService.findByUsername`.
+   - Perform a plain-text password comparison (as requested for now). If invalid, throw `UnauthorizedException`.
+   - If valid, generate a JWT payload containing `sub` (user id), `username`, and `role`.
+   - The method must return the exact structure: `{ accessToken: string, tokenType: 'Bearer', expiresIn: 3600 }`.
+3. Create `src/auth/auth.controller.ts`:
+   - Add a `POST /auth/login` endpoint using `LoginDto`.
+   - Document it with `@ApiTags('Auth')` and standard Swagger response decorators.
+4. Create `src/auth/auth.module.ts`:
+   - Import `UsersModule`.
+   - Register `JwtModule` with a temporary secret (e.g., 'super-secret') and `signOptions: { expiresIn: '3600s' }`.
+   - Provide the controller and service.
+5. Register the `AuthModule` inside `app.module.ts`.
+
+2.We successfully completed part 1 and the login route works perfectly! Let's implement part 2 to protect our routes and add the `/auth/me` endpoint. Please include clean English comments (`//`) at key points:
+
+1. Create a JWT strategy in `src/auth/strategies/jwt.strategy.ts`:
+   - Extend `PassportStrategy(Strategy)` from `@nestjs/passport` and `passport-jwt`.
+   - Configure it to extract the JWT from the `Authorization` header as a Bearer token.
+   - Use the same temporary secret key ('super-secret').
+   - In the `validate(payload)` method, return an object containing `{ id: payload.sub, username: payload.username, role: payload.role }`.
+2. Create a custom guard or register it in `src/auth/guards/jwt-auth.guard.ts` extending `AuthGuard('jwt')`.
+3. Update `src/auth/auth.controller.ts`:
+   - Add a `GET /auth/me` endpoint.
+   - Protect it using `@UseGuards(JwtAuthGuard)`.
+   - Document it in Swagger so it indicates it requires Bearer Authentication.
+   - The endpoint should read the user profile attached to `req.user` and fetch the complete user data via `UsersService` (excluding the password).
+4. Update `src/auth/auth.module.ts` to include `PassportModule` and register the `JwtStrategy` as a provider.
+
+3.Let's implement the final part of the authentication chapter: the Logout functionality. Please include clean, informative comments in English (`//`):
+
+1. Update `src/auth/auth.controller.ts`:
+   - Add a `POST /auth/logout` endpoint.
+   - Protect this endpoint using `@UseGuards(JwtAuthGuard)` because only a logged-in user with a valid token should be able to log out.
+   - Document it in Swagger (`@ApiTags('Auth')` and appropriate Swagger response decorators).
+   - The method should return a clean success message structure: `{ message: 'Logout successful' }`.

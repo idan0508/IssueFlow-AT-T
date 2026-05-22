@@ -72,6 +72,10 @@ Candidates are expected to design and implement the above APIs, adhering to REST
 | Logout (invalidate token) | POST /auth/logout |                                                     | 200 OK          | |
 | Get current user        | GET /auth/me     |    
 
+#### Logout and Token Revocation
+
+Logout is implemented using a simple in-memory denylist. When a user logs out, the current JWT is stored in the denylist until its natural expiration time. Any subsequent request with a denied token is rejected as unauthorized. This approach provides clear logout behavior in a stateless JWT system without requiring server-side session storage.
+
 ---
 
 ### Projects APIs

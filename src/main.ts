@@ -12,6 +12,7 @@ async function bootstrap() {
     .setTitle('IssueFlow API')
     .setDescription('The IssueFlow TDP Home Assignment API documentation')
     .setVersion('1.0')
+    .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
