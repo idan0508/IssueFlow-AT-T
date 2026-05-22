@@ -107,3 +107,14 @@ This file contains the core prompts used during development.
    - Protect this endpoint using `@UseGuards(JwtAuthGuard)` because only a logged-in user with a valid token should be able to log out.
    - Document it in Swagger (`@ApiTags('Auth')` and appropriate Swagger response decorators).
    - The method should return a clean success message structure: `{ message: 'Logout successful' }`.
+
+
+### Projects 
+    1.We are starting Stage 2: Projects Module. Please create the `ProjectsModule` with TypeORM and JWT protection. Follow these exact steps and ensure you include clean, educational comments in English (`//`) at key logic points and complex architecture parts to make the code easy to follow:
+
+1. Create `src/projects/entities/project.entity.ts`. It should have an `id` (PrimaryGeneratedColumn), `name`, `description`, and a `ManyToOne` relationship to the `User` entity (as `owner`). Add `@CreateDateColumn()`, `@UpdateDateColumn()`, and importantly, `@DeleteDateColumn()` to support soft deletes. Add comments explaining the relationship mapping and how soft delete works.
+2. Create `src/projects/dto/create-project.dto.ts` and `update-project.dto.ts` using `class-validator` (IsString, IsNotEmpty, IsOptional) and Swagger decorators (`@ApiProperty`). `ownerId` should be required in CreateDto, but omitted from UpdateDto.
+3. Create `src/projects/projects.service.ts` to handle standard CRUD. Inject the `Project` repository. Implement `create`, `findAll`, `findOne`, `update`, and use TypeORM's `softDelete` or `softRemove` for the `remove` method.
+4. Create `src/projects/projects.controller.ts` with REST endpoints (GET, POST, PATCH, DELETE). Protect the entire controller with `@UseGuards(JwtAuthGuard)`. Add `@ApiBearerAuth()` and `@ApiTags('Projects')` for Swagger documentation.
+5. Create `src/projects/projects.module.ts`, register the `Project` entity via `TypeOrmModule.forFeature([Project])`, and provide the controller and service.
+6. Register `ProjectsModule` inside `app.module.ts`.
