@@ -118,3 +118,78 @@ This file contains the core prompts used during development.
 4. Create `src/projects/projects.controller.ts` with REST endpoints (GET, POST, PATCH, DELETE). Protect the entire controller with `@UseGuards(JwtAuthGuard)`. Add `@ApiBearerAuth()` and `@ApiTags('Projects')` for Swagger documentation.
 5. Create `src/projects/projects.module.ts`, register the `Project` entity via `TypeOrmModule.forFeature([Project])`, and provide the controller and service.
 6. Register `ProjectsModule` inside `app.module.ts`.
+
+### Tickets 
+    1.Generate the core `TicketsModule` for the NestJS application using TypeORM and PostgreSQL. This is Part 1 of the module creation. Do NOT implement CSV export/import yet.
+
+Follow these strict architectural and business logic requirements:
+
+1. **Ticket Entity (`ticket.entity.ts`)**:
+   - `id`: PrimaryGeneratedColumn.
+   - `title`, `description`: String columns.
+   - `status`: Enum (`TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`), default is `TODO`.
+   - `priority`: Enum (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), default is `LOW`.
+   - `type`: Enum (`BUG`, `FEATURE`, `TECHNICAL`).
+   - `dueDate`: Date column.
+   - Relations: `project` (ManyToOne to Project entity, required), `assignee` (ManyToOne to User entity, optional).
+   - Versioning: `version` column using TypeORM's `@VersionColumn()` for Optimistic Locking.
+   - Audit columns: `createdAt`, `updatedAt`, `deletedAt` (for soft deletes).
+
+2. **DTOs (`create-ticket.dto.ts` & `update-ticket.dto.ts`)**:
+   - Use `class-validator` (@IsString, @IsEnum, @IsDate, etc.) and `class-transformer` (e.g., @Type(() => Date)).
+   - `CreateTicketDto` should accept `projectId` (number, required) and `assigneeId` (number, optional).
+   - `UpdateTicketDto` should extend `CreateTicketDto` using `PartialType`, BUT explicitly override and require the `version` field (`@IsInt()`, `@IsNotEmpty()`). This is mandatory for optimistic locking.
+
+3. **Controller (`tickets.controller.ts`)**:
+   - Apply the existing `JwtAuthGuard` globally to the controller.
+   - Endpoints needed: 
+     - `POST /tickets`
+     - `GET /tickets` (Must filter by `projectId` using a query parameter: `?projectId=1`)
+     - `GET /tickets/:ticketId`
+     - `PATCH /tickets/:ticketId`
+     - `DELETE /tickets/:ticketId` (Soft delete. Must return a meaningful JSON success object, not void, e.g., `{ success: true, message: '...' }`).
+
+4. **Service (`tickets.service.ts`) - CRITICAL BUSINESS LOGIC**:
+   - **isOverdue Calculation**: On all `GET` operations, dynamically map the returned ticket objects to include an `isOverdue` boolean property (true if `dueDate < now` AND `status !== DONE`). Do not save this property in the DB.
+   - **DONE Lock**: In the `PATCH` method, if the current DB ticket status is `DONE`, throw a `BadRequestException` ('Cannot update a ticket that is DONE').
+   - **Status Lifecycle**: Enforce that status can only move forward: `TODO` -> `IN_PROGRESS` -> `IN_REVIEW` -> `DONE`. If the incoming status attempts to move backwards, throw a `BadRequestException`.
+   - **Optimistic Locking Conflict Resolution**: In the `PATCH` method, manually compare the `dto.version` against the `dbTicket.version`. If they do not match, do NOT attempt to save. Instead, throw a `ConflictException` (409) containing a custom JSON response that includes the latest ticket state from the DB (e.g., `{ message: 'Ticket updated by another user', latestTicket: dbTicket }`).
+
+5. **Code Documentation**:
+   - Add clear, concise English comments explaining the complex logic inside `tickets.service.ts` (specifically around the lifecycle enforcement, optimistic locking mechanism, and dynamic `isOverdue` calculation) to ensure the logic is highly readable and maintainable.
+
+Write clean, production-ready TypeScript code and provide the implementation for the Entity, DTOs, Controller, Service, and Module.
+
+2.I want to implement Part 2 (CSV Import/Export) using a clean, separated approach (the "half-half" helper approach) so that `tickets.service.ts` doesn't become bloated and remains highly testable.
+
+Please perform the following steps:
+
+1. **Create a Dedicated CSV Helper File** (e.g., `src/tickets/helpers/ticket-csv.helper.ts` or similar):
+   - **Export logic**: Write a pure helper function that takes an array of enriched ticket objects and uses `csv-stringify` to return a clean CSV string.
+   - **Import/Parsing logic**: Write a helper function that takes the uploaded file buffer, parses it using `csv-parse`, and runs structural validations row-by-row (checking for missing mandatory fields like title, status, priority, type, and verifying they match their respective enum types). 
+   - This helper should NOT inject any repositories. It should return an object containing `{ validRows: EnrichedParsedRow[], validationErrors: string[] }`.
+
+2. **Update `tickets.service.ts`**:
+   - Keep it clean by invoking the helper functions.
+   - **For Export (`exportTicketsToCsv`)**: Fetch the data filtering out soft-deleted items, compute `isOverdue` using our standard logic (`isOverdue = (dueDate < now) && (status !== 'DONE')`), and pass it to the export helper.
+   - **For Import (`importTicketsFromCsv`)**: Call the parsing helper first. Then, using the repository already available in the service, perform database-level checks if necessary and execute a bulk save for all `validRows`. Return the final aggregated summary response.
+
+3. **Update `tickets.controller.ts`**:
+   - Add `GET /tickets/export` and `POST /tickets/import`.
+   - Ensure the import endpoint uses NestJS `FileInterceptor` and is fully decorated with Swagger (`@ApiConsumes('multipart/form-data')`) so that a file upload button appears in the Swagger UI.
+
+Let's generate the code across these files.
+
+3.
+I need to perfectly align the CSV import logic with the strict requirements of my assignment README. The exact requirement for the import endpoint is:
+`multipart/form-data: file (CSV), projectId (form field)`
+
+This means the `projectId` must be received as a separate form data field in the Controller, and it should NOT be expected as a column inside the CSV file itself.
+
+Please update `src/tickets/tickets.controller.ts` and `src/tickets/helpers/ticket-csv.helper.ts` to implement this exact architecture:
+
+1. Controller: Update the `importTicketsFromCsv` method to extract `projectId` (parsed as a number) from the multipart form body (e.g., using `@Body('projectId')`), alongside the uploaded file. Pass this `projectId` to the helper function.
+2. Helper: Update the CSV parsing logic so it accepts the `projectId` as an argument from the controller. It should no longer expect or read a `projectId` column from the CSV rows. Instead, it must automatically inject the provided `projectId` into every valid ticket it parses from the file.
+3. Swagger Documentation: Update the `@ApiBody` and `@ApiConsumes('multipart/form-data')` decorators to explicitly show both `file` (binary) and `projectId` (number) as required form fields in the Swagger UI. Add a clear note in the `@ApiOperation` stating that the uploaded CSV should NOT contain `projectId`, `id`, or `isOverdue` columns.
+
+Keep the row-by-row error collecting and validation logic fully intact!

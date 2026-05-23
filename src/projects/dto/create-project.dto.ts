@@ -16,8 +16,4 @@ export class CreateProjectDto {
   @IsNotEmpty()
   ownerId: number;
 
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  notes?: string;
 }

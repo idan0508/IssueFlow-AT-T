@@ -54,7 +54,11 @@ export class ProjectsController {
 
   @Delete(':projectId')
   @ApiOkResponse({ description: 'Project deleted' })
-  async remove(@Param('projectId', ParseIntPipe) projectId: number): Promise<void> {
+  async remove(@Param('projectId', ParseIntPipe) projectId: number) {
     await this.projectsService.remove(projectId);
+    return {
+    success: true,
+    message: `Project with ID ${projectId} was successfully soft-deleted.`,
+   };
   }
 }

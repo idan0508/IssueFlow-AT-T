@@ -20,7 +20,7 @@ export class Project {
   @Column()
   description: string;
 
-  // Each project belongs to one owner, and TypeORM stores the ownerId FK for us.
+  // Each project belongs to one owner, and TypeORM stores the ownerId FK 
   @ManyToOne(() => User, { nullable: false })
   owner: User;
 
