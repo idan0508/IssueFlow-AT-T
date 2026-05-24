@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { User } from '../users/user.entity';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -21,11 +22,13 @@ export class CommentsService {
     private readonly ticketsService: TicketsService,
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   async create(
     ticketId: number,
     input: CreateCommentDto,
+    userId: number,
   ): Promise<Comment & { mentionedUsers: Array<{ id: number; username: string; fullName: string }> }> {
     await this.ticketsService.findOne(ticketId);
 
@@ -38,6 +41,14 @@ export class CommentsService {
     });
 
     const saved = await this.commentsRepository.save(comment);
+    // Audit trail writes are append-only and happen after the comment is persisted.
+    await this.auditLogsService.logAction(
+      'CREATE',
+      'COMMENT',
+      saved.id,
+      userId,
+      'USER',
+    );
     return this.attachMentions(saved);
   }
 
@@ -58,6 +69,7 @@ export class CommentsService {
     ticketId: number,
     commentId: number,
     input: UpdateCommentDto,
+    userId: number,
   ): Promise<Comment & { mentionedUsers: Array<{ id: number; username: string; fullName: string }> }> {
     await this.ticketsService.findOne(ticketId);
 
@@ -103,10 +115,22 @@ export class CommentsService {
       throw new NotFoundException(`Comment with ID ${commentId} not found`);
     }
 
+    // Audit trail writes are append-only and happen after the update succeeds.
+    await this.auditLogsService.logAction(
+      'UPDATE',
+      'COMMENT',
+      updated.id,
+      userId,
+      'USER',
+    );
     return this.attachMentions(updated);
   }
 
-  async remove(ticketId: number, commentId: number): Promise<void> {
+  async remove(
+    ticketId: number,
+    commentId: number,
+    userId: number,
+  ): Promise<void> {
     await this.ticketsService.findOne(ticketId);
 
     const result = await this.commentsRepository.softDelete({
@@ -117,6 +141,15 @@ export class CommentsService {
     if (!result.affected) {
       throw new NotFoundException(`Comment with ID ${commentId} not found`);
     }
+
+    // Audit trail writes are append-only and happen after the delete succeeds.
+    await this.auditLogsService.logAction(
+      'DELETE',
+      'COMMENT',
+      commentId,
+      userId,
+      'USER',
+    );
   }
 
   private async attachMentions(

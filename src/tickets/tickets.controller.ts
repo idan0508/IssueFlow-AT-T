@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Header,
   HttpCode,
@@ -11,6 +12,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -51,8 +53,27 @@ export class TicketsController {
   })
   create(
     @Body() body: CreateTicketDto,
+    @Req() req: { user: { id: number } },
   ): Promise<Ticket & { isOverdue: boolean }> {
-    return this.ticketsService.create(body);
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    return this.ticketsService.create(body, req.user.id);
+  }
+
+  @Post(':ticketId/restore')
+  @HttpCode(200)
+  @ApiOkResponse({
+    schema: ticketWithOverdueSchema,
+  })
+  restore(
+    @Param('ticketId', ParseIntPipe) ticketId: number,
+    @Req() req: { user: { id: number; role: string } },
+  ): Promise<Ticket & { isOverdue: boolean }> {
+    if (req.user.role !== 'ADMIN') {
+      throw new ForbiddenException('Only admins can access deleted records');
+    }
+
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    return this.ticketsService.restore(ticketId, req.user.id);
   }
 
   @Get()
@@ -64,6 +85,22 @@ export class TicketsController {
     @Query('projectId', ParseIntPipe) projectId: number,
   ): Promise<Array<Ticket & { isOverdue: boolean }>> {
     return this.ticketsService.findAll(projectId);
+  }
+
+  @Get('deleted')
+  @ApiQuery({ name: 'projectId', type: Number, required: true })
+  @ApiOkResponse({
+    schema: ticketWithOverdueArraySchema,
+  })
+  findDeleted(
+    @Query('projectId', ParseIntPipe) projectId: number,
+    @Req() req: { user: { role: string } },
+  ): Promise<Array<Ticket & { isOverdue: boolean }>> {
+    if (req.user.role !== 'ADMIN') {
+      throw new ForbiddenException('Only admins can access deleted records');
+    }
+
+    return this.ticketsService.findDeleted(projectId);
   }
 
   @Get('export')
@@ -98,17 +135,23 @@ export class TicketsController {
   update(
     @Param('ticketId', ParseIntPipe) ticketId: number,
     @Body() body: UpdateTicketDto,
+    @Req() req: { user: { id: number } },
   ): Promise<Ticket & { isOverdue: boolean }> {
-    return this.ticketsService.update(ticketId, body);
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    return this.ticketsService.update(ticketId, body, req.user.id);
   }
 
   @Delete(':ticketId')
   @ApiOkResponse({ description: 'Ticket deleted' })
-  async remove(@Param('ticketId', ParseIntPipe) ticketId: number): Promise<{
+  async remove(
+    @Param('ticketId', ParseIntPipe) ticketId: number,
+    @Req() req: { user: { id: number } },
+  ): Promise<{
     success: boolean;
     message: string;
   }> {
-    await this.ticketsService.remove(ticketId);
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    await this.ticketsService.remove(ticketId, req.user.id);
     return {
       success: true,
       message: `Ticket with ID ${ticketId} was successfully soft-deleted.`,

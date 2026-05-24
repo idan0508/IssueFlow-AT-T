@@ -2,12 +2,14 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   Param,
   ParseIntPipe,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
@@ -30,6 +32,18 @@ export class ProjectsController {
     return this.projectsService.findAll();
   }
 
+  @Get('deleted')
+  @ApiOkResponse({ type: Project, isArray: true })
+  findDeleted(
+    @Req() req: { user: { role: string } },
+  ): Promise<Project[]> {
+    if (req.user.role !== 'ADMIN') {
+      throw new ForbiddenException('Only admins can access deleted records');
+    }
+
+    return this.projectsService.findDeleted();
+  }
+
   @Get(':projectId')
   @ApiOkResponse({ type: Project })
   findOne(
@@ -38,11 +52,44 @@ export class ProjectsController {
     return this.projectsService.findOne(projectId);
   }
 
+  @Get(':projectId/workload')
+  @ApiOkResponse({
+    schema: {
+      example: [
+        { userId: 1, username: 'Idan', openTicketCount: 3 },
+        { userId: 2, username: 'amit', openTicketCount: 5 },
+      ],
+    },
+  })
+  getWorkload(
+    @Param('projectId', ParseIntPipe) projectId: number,
+  ): Promise<Array<{ userId: number; username: string; openTicketCount: number }>> {
+    return this.projectsService.getWorkload(projectId);
+  }
+
   @Post()
   @HttpCode(200)
   @ApiOkResponse({ type: Project })
-  create(@Body() body: CreateProjectDto): Promise<Project> {
-    return this.projectsService.create(body);
+  create(
+    @Body() body: CreateProjectDto,
+    @Req() req: { user: { id: number } },
+  ): Promise<Project> {
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    return this.projectsService.create(body, req.user.id);
+  }
+
+  @Post(':projectId/restore')
+  @HttpCode(200)
+  @ApiOkResponse({ type: Project })
+  restore(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Req() req: { user: { role: string } },
+  ): Promise<Project> {
+    if (req.user.role !== 'ADMIN') {
+      throw new ForbiddenException('Only admins can access deleted records');
+    }
+
+    return this.projectsService.restore(projectId);
   }
 
   @Patch(':projectId')
@@ -50,14 +97,20 @@ export class ProjectsController {
   update(
     @Param('projectId', ParseIntPipe) projectId: number,
     @Body() body: UpdateProjectDto,
+    @Req() req: { user: { id: number } },
   ): Promise<Project> {
-    return this.projectsService.update(projectId, body);
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    return this.projectsService.update(projectId, body, req.user.id);
   }
 
   @Delete(':projectId')
   @ApiOkResponse({ description: 'Project deleted' })
-  async remove(@Param('projectId', ParseIntPipe) projectId: number) {
-    await this.projectsService.remove(projectId);
+  async remove(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Req() req: { user: { id: number } },
+  ) {
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    await this.projectsService.remove(projectId, req.user.id);
     return {
     success: true,
     message: `Project with ID ${projectId} was successfully soft-deleted.`,

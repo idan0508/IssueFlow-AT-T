@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -73,8 +74,10 @@ export class CommentsController {
   create(
     @Param('ticketId', ParseIntPipe) ticketId: number,
     @Body() body: CreateCommentDto,
+    @Req() req: { user: { id: number } },
   ): Promise<Comment & { mentionedUsers: Array<{ id: number; username: string; fullName: string }> }> {
-    return this.commentsService.create(ticketId, body);
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    return this.commentsService.create(ticketId, body, req.user.id);
   }
 
   @Patch(':commentId')
@@ -96,8 +99,10 @@ export class CommentsController {
     @Param('ticketId', ParseIntPipe) ticketId: number,
     @Param('commentId', ParseIntPipe) commentId: number,
     @Body() body: UpdateCommentDto,
+    @Req() req: { user: { id: number } },
   ): Promise<Comment & { mentionedUsers: Array<{ id: number; username: string; fullName: string }> }> {
-    return this.commentsService.update(ticketId, commentId, body);
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    return this.commentsService.update(ticketId, commentId, body, req.user.id);
   }
 
   @Delete(':commentId')
@@ -107,7 +112,9 @@ export class CommentsController {
   remove(
     @Param('ticketId', ParseIntPipe) ticketId: number,
     @Param('commentId', ParseIntPipe) commentId: number,
+    @Req() req: { user: { id: number } },
   ): Promise<void> {
-    return this.commentsService.remove(ticketId, commentId);
+    // Propagate the authenticated user id so the audit log can capture the actor.
+    return this.commentsService.remove(ticketId, commentId, req.user.id);
   }
 }

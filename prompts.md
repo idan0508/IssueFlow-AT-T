@@ -195,3 +195,71 @@ Please update `src/tickets/tickets.controller.ts` and `src/tickets/helpers/ticke
 Keep the row-by-row error collecting and validation logic fully intact!
 
 ### Extended Features 
+1.Implement the missing endpoints and service methods for the "Soft Delete & Restore" feature based on the project README contract.
+
+Enforce the ADMIN-only constraint by checking `req.user.role !== 'ADMIN'` directly inside the controllers. If the user is not an admin, throw a `ForbiddenException('Only admins can access deleted records')`. 
+
+Add clear inline English comments explaining the TypeORM soft-delete filtering and restoration logic in complex areas.
+
+Make the following exact changes:
+
+1. Update `src/projects/projects.controller.ts` & `src/projects/projects.service.ts`:
+   - GET `/projects/deleted` -> Protected by `JwtAuthGuard`. Checks if user is ADMIN. Returns only soft-deleted projects.
+   - POST `/projects/:projectId/restore` -> Protected by `JwtAuthGuard`. Checks if user is ADMIN. Restores the project using TypeORM. Must explicitly use `@HttpCode(200)`.
+
+2. Update `src/tickets/tickets.controller.ts` & `src/tickets/tickets.service.ts`:
+   - GET `/tickets/deleted` -> Protected by `JwtAuthGuard`. Accepts `projectId` as a query parameter. Checks if user is ADMIN. Returns only soft-deleted tickets filtered by that `projectId`.
+   - POST `/tickets/:ticketId/restore` -> Protected by `JwtAuthGuard`. Checks if user is ADMIN. Restores the ticket using TypeORM. Must explicitly use `@HttpCode(200)`.
+
+Technical specifics for implementation:
+- To fetch only deleted records, use TypeORM's `withDeleted: true` query option combined with an `IsNotNull()` find operator on the deletion timestamp column.
+- To restore records, use TypeORM's built-in `.restore(id)` repository method.
+- Ensure all existing standard GET methods remain untouched so that soft-deleted items stay hidden from regular users.
+
+2.Implement Feature 3.8: Auto Assignment to Users by Workload. Make the exact following changes:
+
+1. In `src/tickets/tickets.service.ts` -> update the existing `create` method:
+If `input.assigneeId` is absent or null, execute auto-assignment:
+- Find all users linked to `input.projectId` who have `role: 'DEVELOPER'`.
+- Calculate the workload for each developer: count tickets in this project assigned to them where `status != 'DONE'` and `deletedAt IS NULL`.
+- Select the developer with the lowest workload count.
+- Tie-breaker: If counts are equal, pick the user with the lowest `id` (oldest registrant).
+- If a developer is found, set them as the `assignee`. If no developers exist in the project, leave `assignee` as `null` without throwing an error.
+- Add an inline comment: `// TODO: Record in Audit Log (actor=SYSTEM, action=AUTO_ASSIGN)` (we will implement the actual audit log later).
+
+2. In `src/projects/projects.controller.ts` & `src/projects/projects.service.ts`:
+- Add endpoint `GET /projects/:projectId/workload`.
+- Protect it with `JwtAuthGuard`.
+- The service method should calculate the workload for all users in the project and return an array of objects matching this exact structure: `{ userId, username, openTicketCount }`.
+- Sort the resulting array by `openTicketCount` ascending.
+
+Include inline English comments explaining the workload calculation and tie-breaker sorting. Do not break the existing TypeORM implementations.
+
+3.Create the Audit Logs module matching the README specifications.
+Add inline comments in English to explain complex structural logic, specifically around the dynamic filtering. Do not generate test files.
+
+1. Create `src/audit-logs/entities/audit-log.entity.ts`:
+Define an `AuditLog` entity with columns:
+- `id`: auto-increment primary key.
+- `action`: string.
+- `entityType`: string.
+- `entityId`: number.
+- `performedBy`: number (nullable).
+- `actor`: string.
+- `timestamp`: Date (use TypeORM CreateDateColumn for automatic, immutable timestamping).
+
+2. Create `src/audit-logs/audit-logs.service.ts`:
+- Implement `logAction(action: string, entityType: string, entityId: number, performedBy: number | null, actor: string): Promise<AuditLog>`. This method must only insert data to enforce an append-only architecture.
+- Implement `getLogs(filters: { entityType?: string, entityId?: number, action?: string, actor?: string }): Promise<AuditLog[]>`. Add logic to dynamically build the TypeORM `where` clause based only on the provided filter parameters.
+
+3. Create `src/audit-logs/audit-logs.controller.ts`:
+- Implement `GET /audit-logs`.
+- Protect the endpoint with `JwtAuthGuard`.
+- Use `@Query()` to accept optional query parameters: `entityType`, `entityId`, `action`, `actor`. Pass these directly to the `getLogs` service method.
+
+4. Create `src/audit-logs/audit-logs.module.ts`:
+- Configure `TypeOrmModule.forFeature([AuditLog])`.
+- Register the controller and the service.
+- Export `AuditLogsService` so it can be injected into other feature modules.
+
+Generate the files inside a new `src/audit-logs` folder now.
