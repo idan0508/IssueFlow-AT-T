@@ -263,3 +263,39 @@ Define an `AuditLog` entity with columns:
 - Export `AuditLogsService` so it can be injected into other feature modules.
 
 Generate the files inside a new `src/audit-logs` folder now.
+
+4.Implement the database foundation for Feature 3.2 (Ticket Dependencies).
+Update `src/tickets/entities/ticket.entity.ts` to support a self-referencing Many-to-Many relationship. Do not alter any existing columns.
+
+1. Import `ManyToMany` and `JoinTable` from `typeorm`.
+2. Add a `blockedBy` field:
+   @ManyToMany(() => Ticket, ticket => ticket.blocking)
+   @JoinTable()
+   blockedBy: Ticket[];
+
+3. Add the inverse `blocking` field:
+   @ManyToMany(() => Ticket, ticket => ticket.blockedBy)
+   blocking: Ticket[];
+
+Add inline comments explaining that this is for Feature 3.2 dependencies. Do not touch any services or controllers yet.
+
+4.Create the database infrastructure for Feature 3.3 (Attachment Management). Do not add any service logic or controller endpoints yet. Add clear inline comments in English.
+
+1. Create a new entity file `src/tickets/entities/attachment.entity.ts`:
+   - Define an `Attachment` class decorated with `@Entity()`.
+   - Columns:
+     - `id`: Primary generated column.
+     - `filename`: varchar column, stores the original file name.
+     - `contentType`: varchar column, stores the mime type.
+     - `data`: column with `type: 'bytea'` (or compatible binary buffer type) to store the file content in the database.
+   - Relationship: Add a `@ManyToOne(() => Ticket, ticket => ticket.attachments, { onDelete: 'CASCADE' })` relation to connect each attachment to a ticket.
+
+2. Update `src/tickets/entities/ticket.entity.ts`:
+   - Import the `Attachment` entity.
+   - Add a `@OneToMany(() => Attachment, attachment => attachment.ticket)` relation named `attachments: Attachment[];`.
+
+3. Update `src/tickets/tickets.module.ts`:
+   - Import the `Attachment` entity.
+   - Add `Attachment` to the `TypeOrmModule.forFeature([...])` array so its repository becomes available.
+
+Apply these database layer updates now.

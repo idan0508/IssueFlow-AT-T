@@ -365,6 +365,400 @@ describe('AppController (e2e)', () => {
   });
 
   // =========================================================================
+  // FEATURE 3.2 - TICKET DEPENDENCIES
+  // =========================================================================
+  describe('Feature 3.2 - Ticket Dependencies', () => {
+    const createUser = async (suffix: string) => {
+      const username = `user_${suffix}`;
+      const password = 'secret';
+
+      const response = await request(app.getHttpServer())
+        .post('/users')
+        .send({
+          username,
+          email: `${username}@example.com`,
+          fullName: 'Test User',
+          role: 'DEVELOPER',
+          password,
+        })
+        .expect(200);
+
+      return { id: response.body.id, username, password };
+    };
+
+    const login = async (username: string, password: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ username, password })
+        .expect(200);
+
+      return response.body.accessToken as string;
+    };
+
+    const createProject = async (
+      accessToken: string,
+      ownerId: number,
+      name: string,
+    ) => {
+      const response = await request(app.getHttpServer())
+        .post('/projects')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          name,
+          description: 'Dependency tests',
+          ownerId,
+        })
+        .expect(200);
+
+      return response.body.id as number;
+    };
+
+    const createTicket = async (options: {
+      accessToken: string;
+      projectId: number;
+      title: string;
+      status?: string;
+    }) => {
+      const response = await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${options.accessToken}`)
+        .send({
+          title: options.title,
+          description: 'Dependency test ticket',
+          status: options.status ?? 'TODO',
+          priority: 'LOW',
+          type: 'BUG',
+          projectId: options.projectId,
+          dueDate: new Date(Date.now() + 86400000).toISOString(),
+        })
+        .expect(200);
+
+      return response.body as { id: number; version: number };
+    };
+
+    // Sub-test: Verifying a dependency can be added between tickets in the same project.
+    it('successfully adds a dependency between two tickets in the same project', async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_dep_add`);
+      const accessToken = await login(user.username, user.password);
+      const projectId = await createProject(accessToken, user.id, 'Dependency Add');
+
+      const blocked = await createTicket({
+        accessToken,
+        projectId,
+        title: 'Blocked ticket',
+      });
+
+      const blocker = await createTicket({
+        accessToken,
+        projectId,
+        title: 'Blocker ticket',
+      });
+
+      // Add the blocker to the blocked ticket.
+      await request(app.getHttpServer())
+        .post(`/tickets/${blocked.id}/dependencies`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ blockedBy: blocker.id })
+        .expect(200);
+
+      const response = await request(app.getHttpServer())
+        .get(`/tickets/${blocked.id}/dependencies`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(Array.isArray(response.body)).toBe(true);
+      expect(response.body).toHaveLength(1);
+      expect(response.body[0].id).toBe(blocker.id);
+    });
+
+    // Sub-test: Verifying dependencies cannot cross project boundaries.
+    it('prevents dependency addition if tickets belong to different projects', async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_dep_cross`);
+      const accessToken = await login(user.username, user.password);
+      const projectAId = await createProject(accessToken, user.id, 'Project A');
+      const projectBId = await createProject(accessToken, user.id, 'Project B');
+
+      const blocked = await createTicket({
+        accessToken,
+        projectId: projectAId,
+        title: 'Blocked ticket A',
+      });
+
+      const blocker = await createTicket({
+        accessToken,
+        projectId: projectBId,
+        title: 'Blocker ticket B',
+      });
+
+      await request(app.getHttpServer())
+        .post(`/tickets/${blocked.id}/dependencies`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ blockedBy: blocker.id })
+        .expect(400);
+    });
+
+    // Sub-test: Verifying DONE transition is blocked when dependencies are unresolved.
+    it('prevents a ticket from moving to DONE if its blocker is not DONE', async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_dep_blocked`);
+      const accessToken = await login(user.username, user.password);
+      const projectId = await createProject(accessToken, user.id, 'Dependency Block');
+
+      const blocked = await createTicket({
+        accessToken,
+        projectId,
+        title: 'Blocked ticket',
+      });
+
+      const blocker = await createTicket({
+        accessToken,
+        projectId,
+        title: 'Blocker ticket',
+      });
+
+      // Add a dependency so the blocked ticket cannot complete yet.
+      await request(app.getHttpServer())
+        .post(`/tickets/${blocked.id}/dependencies`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ blockedBy: blocker.id })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/tickets/${blocked.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'DONE', version: blocked.version })
+        .expect(400);
+    });
+
+    // Sub-test: Verifying DONE transition succeeds after blocker completion or removal.
+    it('allows the transition to DONE once the blocker is DONE', async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_dep_done`);
+      const accessToken = await login(user.username, user.password);
+      const projectId = await createProject(accessToken, user.id, 'Dependency Done');
+
+      const blocked = await createTicket({
+        accessToken,
+        projectId,
+        title: 'Blocked ticket',
+      });
+
+      const blocker = await createTicket({
+        accessToken,
+        projectId,
+        title: 'Blocker ticket',
+      });
+
+      // Add a dependency, then resolve the blocker before completing the blocked ticket.
+      await request(app.getHttpServer())
+        .post(`/tickets/${blocked.id}/dependencies`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ blockedBy: blocker.id })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/tickets/${blocker.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'DONE', version: blocker.version })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/tickets/${blocked.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'DONE', version: blocked.version })
+        .expect(200);
+    });
+
+    // Sub-test: Verifying dependency removal succeeds and persists.
+    it('successfully removes a dependency', async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_dep_remove`);
+      const accessToken = await login(user.username, user.password);
+      const projectId = await createProject(accessToken, user.id, 'Dependency Remove');
+
+      const blocked = await createTicket({
+        accessToken,
+        projectId,
+        title: 'Blocked ticket',
+      });
+
+      const blocker = await createTicket({
+        accessToken,
+        projectId,
+        title: 'Blocker ticket',
+      });
+
+      await request(app.getHttpServer())
+        .post(`/tickets/${blocked.id}/dependencies`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ blockedBy: blocker.id })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .delete(`/tickets/${blocked.id}/dependencies/${blocker.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const response = await request(app.getHttpServer())
+        .get(`/tickets/${blocked.id}/dependencies`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(Array.isArray(response.body)).toBe(true);
+      expect(response.body).toHaveLength(0);
+    });
+  });
+
+  // =========================================================================
+  // FEATURE 3.3 - ATTACHMENT MANAGEMENT
+  // =========================================================================
+  describe('Feature 3.3 - Attachment Management', () => {
+    let accessToken: string;
+    let ticketId: number;
+    let attachmentId: number | undefined;
+
+    const createUser = async (suffix: string) => {
+      const username = `user_${suffix}`;
+      const password = 'secret';
+
+      const response = await request(app.getHttpServer())
+        .post('/users')
+        .send({
+          username,
+          email: `${username}@example.com`,
+          fullName: 'Test User',
+          role: 'DEVELOPER',
+          password,
+        })
+        .expect(200);
+
+      return { id: response.body.id, username, password };
+    };
+
+    const login = async (username: string, password: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ username, password })
+        .expect(200);
+
+      return response.body.accessToken as string;
+    };
+
+    const createProject = async (
+      ownerId: number,
+      name: string,
+    ) => {
+      const response = await request(app.getHttpServer())
+        .post('/projects')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          name,
+          description: 'Attachment tests',
+          ownerId,
+        })
+        .expect(200);
+
+      return response.body.id as number;
+    };
+
+    const createTicket = async (projectId: number) => {
+      const response = await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          title: 'Attachment test ticket',
+          description: 'Ticket for attachment tests',
+          status: 'TODO',
+          priority: 'LOW',
+          type: 'BUG',
+          projectId,
+          dueDate: new Date(Date.now() + 86400000).toISOString(),
+        })
+        .expect(200);
+
+      return response.body.id as number;
+    };
+
+    beforeEach(async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_attach`);
+      accessToken = await login(user.username, user.password);
+      const projectId = await createProject(user.id, 'Attachment Project');
+      ticketId = await createTicket(projectId);
+      attachmentId = undefined;
+    });
+
+    // Sub-test: Verifying a valid file upload succeeds and returns metadata.
+    it('successfully uploads a valid file', async () => {
+      const buffer = Buffer.from('hello world');
+
+      const response = await request(app.getHttpServer())
+        .post(`/tickets/${ticketId}/attachments`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .attach('file', buffer, {
+          filename: 'test.txt',
+          contentType: 'text/plain',
+        })
+        .expect(200);
+
+      expect(response.body.id).toBeDefined();
+      expect(response.body.ticketId).toBe(ticketId);
+      expect(response.body.filename).toBe('test.txt');
+      expect(response.body.contentType).toBe('text/plain');
+
+      attachmentId = response.body.id as number;
+    });
+
+    // Sub-test: Verifying uploads exceeding 10MB are rejected.
+    it('rejects a file exceeding 10MB', async () => {
+      const buffer = Buffer.alloc(10 * 1024 * 1024 + 1);
+
+      await request(app.getHttpServer())
+        .post(`/tickets/${ticketId}/attachments`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .attach('file', buffer, 'huge.png')
+        .expect(400);
+    });
+
+    // Sub-test: Verifying invalid file types are rejected.
+    it('rejects an invalid file type', async () => {
+      const buffer = Buffer.from('invalid');
+
+      await request(app.getHttpServer())
+        .post(`/tickets/${ticketId}/attachments`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .attach('file', buffer, {
+          filename: 'test.gif',
+          contentType: 'image/gif',
+        })
+        .expect(400);
+    });
+
+    // Sub-test: Verifying attachment deletion succeeds.
+    it('successfully deletes an attachment', async () => {
+      const buffer = Buffer.from('hello world');
+
+      const response = await request(app.getHttpServer())
+        .post(`/tickets/${ticketId}/attachments`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .attach('file', buffer, {
+          filename: 'test.txt',
+          contentType: 'text/plain',
+        })
+        .expect(200);
+
+      const idToDelete = response.body.id as number;
+
+      await request(app.getHttpServer())
+        .delete(`/tickets/${ticketId}/attachments/${idToDelete}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+    });
+  });
+
+  // =========================================================================
   // FEATURE 3.1 - AUDIT LOGS
   // =========================================================================
   describe('Feature 3.1 - Audit Logs', () => {

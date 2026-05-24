@@ -2,12 +2,16 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 import { Project } from '../projects/entities/project.entity';
+import { Attachment } from './entities/attachment.entity';
 import { Ticket } from './entities/ticket.entity';
 import { TicketsController } from './tickets.controller';
 import { TicketsService } from './tickets.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Ticket, Project]), AuditLogsModule],
+  imports: [
+    TypeOrmModule.forFeature([Ticket, Project, Attachment]),
+    AuditLogsModule,
+  ],
   controllers: [TicketsController],
   providers: [TicketsService],
   exports: [TicketsService],

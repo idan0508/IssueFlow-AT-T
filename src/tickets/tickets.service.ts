@@ -11,6 +11,7 @@ import { Project } from '../projects/entities/project.entity';
 import { UserRole } from '../users/user.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
+import { Attachment } from './entities/attachment.entity';
 import { Ticket, TicketStatus } from './entities/ticket.entity';
 import {
   buildTicketsCsv,
@@ -31,6 +32,8 @@ export class TicketsService {
     private readonly ticketsRepository: Repository<Ticket>,
     @InjectRepository(Project)
     private readonly projectsRepository: Repository<Project>,
+    @InjectRepository(Attachment)
+    private readonly attachmentsRepository: Repository<Attachment>,
     private readonly auditLogsService: AuditLogsService,
   ) {}
 
@@ -132,6 +135,28 @@ export class TicketsService {
         message: 'Ticket updated by another user',
         latestTicket: this.withIsOverdue(ticket),
       });
+    }
+
+    if (input.status === TicketStatus.DONE) {
+      // Validate blockers before completing a ticket to enforce dependency rules.
+      const ticketWithBlockers = await this.ticketsRepository.findOne({
+        where: { id },
+        relations: { blockedBy: true },
+      });
+
+      if (!ticketWithBlockers) {
+        throw new NotFoundException(`Ticket with ID ${id} not found`);
+      }
+
+      const hasUnresolvedBlockers = ticketWithBlockers.blockedBy?.some(
+        (blocker) => blocker.status !== TicketStatus.DONE,
+      );
+
+      if (hasUnresolvedBlockers) {
+        throw new BadRequestException(
+          'Ticket cannot transition to DONE because it has unresolved blockers',
+        );
+      }
     }
 
     if (input.status) {
@@ -247,6 +272,119 @@ export class TicketsService {
       'USER',
     );
     return this.withIsOverdue(restored);
+  }
+
+  // ==========================================
+  // Attachments (Feature 3.3)
+  // ==========================================
+  async uploadAttachment(
+    ticketId: number,
+    file: Express.Multer.File,
+  ): Promise<{ id: number; ticketId: number; filename: string; contentType: string }> {
+    const ticket = await this.ticketsRepository.findOne({
+      where: { id: ticketId },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException(`Ticket with ID ${ticketId} not found`);
+    }
+
+    const attachment = this.attachmentsRepository.create({
+      filename: file.originalname,
+      contentType: file.mimetype,
+      data: file.buffer,
+      ticket: { id: ticketId },
+    });
+
+    const saved = await this.attachmentsRepository.save(attachment);
+
+    return {
+      id: saved.id,
+      ticketId,
+      filename: saved.filename,
+      contentType: saved.contentType,
+    };
+  }
+
+  async deleteAttachment(ticketId: number, attachmentId: number): Promise<void> {
+    const result = await this.attachmentsRepository.delete({
+      id: attachmentId,
+      ticket: { id: ticketId },
+    });
+
+    if (!result.affected) {
+      throw new NotFoundException(`Attachment with ID ${attachmentId} not found`);
+    }
+  }
+
+  // ==========================================
+  // Dependencies (Feature 3.2)
+  // ==========================================
+  async addDependency(ticketId: number, blockerId: number): Promise<Ticket> {
+    const ticket = await this.ticketsRepository.findOne({
+      where: { id: ticketId },
+      relations: { project: true, blockedBy: true },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException(`Ticket with ID ${ticketId} not found`);
+    }
+
+    const blocker = await this.ticketsRepository.findOne({
+      where: { id: blockerId },
+      relations: { project: true },
+    });
+
+    if (!blocker) {
+      throw new NotFoundException(`Ticket with ID ${blockerId} not found`);
+    }
+
+    if (ticket.project.id !== blocker.project.id) {
+      throw new BadRequestException('Tickets must belong to the same project');
+    }
+
+    // Maintain a unique blockedBy list to avoid duplicate dependency rows.
+    const alreadyLinked = ticket.blockedBy.some(
+      (existing) => existing.id === blocker.id,
+    );
+
+    if (!alreadyLinked) {
+      ticket.blockedBy.push(blocker);
+    }
+
+    return this.ticketsRepository.save(ticket);
+  }
+
+  async getDependencies(ticketId: number): Promise<Ticket[]> {
+    const ticket = await this.ticketsRepository.findOne({
+      where: { id: ticketId },
+      relations: { blockedBy: true },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException(`Ticket with ID ${ticketId} not found`);
+    }
+
+    // Return the resolved list of tickets blocking the requested ticket.
+    return ticket.blockedBy;
+  }
+
+  async removeDependency(ticketId: number, blockerId: number): Promise<Ticket> {
+    const ticket = await this.ticketsRepository.findOne({
+      where: { id: ticketId },
+      relations: { blockedBy: true },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException(`Ticket with ID ${ticketId} not found`);
+    }
+
+    // Remove the blocker relation by filtering it out and persisting the change.
+    ticket.blockedBy = ticket.blockedBy.filter(
+      (existing) => existing.id !== blockerId,
+    );
+
+    return this.ticketsRepository.save(ticket);
   }
 
   // ==========================================

@@ -3,13 +3,17 @@ import {
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
+  JoinTable,
+  ManyToMany,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
   VersionColumn,
 } from 'typeorm';
 import { Project } from '../../projects/entities/project.entity';
 import { User } from '../../users/user.entity';
+import { Attachment } from './attachment.entity';
 
 export enum TicketStatus {
   TODO = 'TODO',
@@ -65,6 +69,17 @@ export class Ticket {
   // Tickets can be unassigned, so the assignee relation is optional.
   @ManyToOne(() => User, { nullable: true })
   assignee: User | null;
+
+  // Feature 3.3: Attachments stored for each ticket.
+  @OneToMany(() => Attachment, (attachment) => attachment.ticket)
+  attachments: Attachment[];
+
+  @ManyToMany(() => Ticket, (ticket) => ticket.blocking)
+  @JoinTable()
+  blockedBy: Ticket[];
+
+  @ManyToMany(() => Ticket, (ticket) => ticket.blockedBy)
+  blocking: Ticket[];
 
   // Optimistic locking increments version on each update.
   @VersionColumn()

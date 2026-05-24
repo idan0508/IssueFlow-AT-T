@@ -7,7 +7,9 @@ import {
   Get,
   Header,
   HttpCode,
+  HttpStatus,
   Param,
+  ParseFilePipeBuilder,
   ParseIntPipe,
   Patch,
   Post,
@@ -116,6 +118,76 @@ export class TicketsController {
     @Query('projectId', ParseIntPipe) projectId: number,
   ): Promise<string> {
     return this.ticketsService.exportTicketsToCsv(projectId);
+  }
+
+  @Post(':ticketId/dependencies')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ description: 'Dependency added' })
+  addDependency(
+    @Param('ticketId', ParseIntPipe) ticketId: number,
+    @Body() body: { blockedBy: number },
+  ): Promise<Ticket> {
+    // Attach a blocker to the ticket while preventing duplicate dependencies.
+    return this.ticketsService.addDependency(ticketId, body.blockedBy);
+  }
+
+  @Get(':ticketId/dependencies')
+  @ApiOkResponse({ type: Ticket, isArray: true })
+  getDependencies(
+    @Param('ticketId', ParseIntPipe) ticketId: number,
+  ): Promise<Ticket[]> {
+    // Return the tickets that currently block the requested ticket.
+    return this.ticketsService.getDependencies(ticketId);
+  }
+
+  @Delete(':ticketId/dependencies/:blockerId')
+  @ApiOkResponse({ description: 'Dependency removed' })
+  removeDependency(
+    @Param('ticketId', ParseIntPipe) ticketId: number,
+    @Param('blockerId', ParseIntPipe) blockerId: number,
+  ): Promise<Ticket> {
+    // Remove the blocker link and persist the updated dependency list.
+    return this.ticketsService.removeDependency(ticketId, blockerId);
+  }
+
+  @Post(':ticketId/attachments')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOkResponse({
+    schema: {
+      example: {
+        id: 1,
+        ticketId: 1,
+        filename: 'screenshot.png',
+        contentType: 'image/png',
+      },
+    },
+  })
+  uploadAttachment(
+    @Param('ticketId', ParseIntPipe) ticketId: number,
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({
+          fileType: /(image\/png|image\/jpeg|application\/pdf|text\/plain)/,
+        })
+        .addMaxSizeValidator({ maxSize: 10 * 1024 * 1024 })
+        .build({ errorHttpStatusCode: HttpStatus.BAD_REQUEST }),
+    )
+    file: Express.Multer.File,
+  ): Promise<{ id: number; ticketId: number; filename: string; contentType: string }> {
+    // Validate the upload payload and persist the attachment for the ticket.
+    return this.ticketsService.uploadAttachment(ticketId, file);
+  }
+
+  @Delete(':ticketId/attachments/:attachmentId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ description: 'Attachment deleted' })
+  async deleteAttachment(
+    @Param('ticketId', ParseIntPipe) ticketId: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+  ): Promise<void> {
+    // Remove the attachment by id while scoping it to the owning ticket.
+    await this.ticketsService.deleteAttachment(ticketId, attachmentId);
   }
 
   @Get(':ticketId')
