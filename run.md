@@ -74,5 +74,5 @@ npm run test:e2e
 * The system's internal core validation (`withIsOverdue` engine inside `TicketsService`) has been fortified with programmatic instantiation (`new Date(ticket.dueDate)`) to naturally ensure seamless runtime evaluation for both pure database models and incoming transfer payloads.
 
 ```
-
+During development, some IDEs (like VS Code) may show a linter warning (dotted underline) on the supertest import or request usage. This is a known issue with TypeScript/Jest type definitions in this environment. The tests are fully functional and execute correctly via npm run test:e2e.
 ```
