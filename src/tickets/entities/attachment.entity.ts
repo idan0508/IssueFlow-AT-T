@@ -15,11 +15,9 @@ export class Attachment {
   @Column({ name: 'filename', type: 'varchar' })
   filename: string;
 
-  // MIME type captured at upload time for validation and download headers.
   @Column({ name: 'content_type', type: 'varchar' })
   contentType: string;
 
-  // Binary payload stored in the database (Feature 3.3 storage).
   @Column({ type: 'bytea' })
   data: Buffer;
 

@@ -167,14 +167,18 @@ export class TicketsController {
     @Param('ticketId', ParseIntPipe) ticketId: number,
     @UploadedFile(
       new ParseFilePipeBuilder()
-        .addFileTypeValidator({
-          fileType: /(image\/png|image\/jpeg|application\/pdf|text\/plain)/,
-        })
         .addMaxSizeValidator({ maxSize: 10 * 1024 * 1024 })
         .build({ errorHttpStatusCode: HttpStatus.BAD_REQUEST }),
     )
     file: Express.Multer.File,
   ): Promise<{ id: number; ticketId: number; filename: string; contentType: string }> {
+    const allowedTypes = ['image/png', 'image/jpeg', 'application/pdf', 'text/plain'];
+    const isValid = allowedTypes.some((type) => file.mimetype.includes(type));
+
+    if (!isValid) {
+      throw new BadRequestException('Validation failed (invalid file type)');
+    }
+
     // Validate the upload payload and persist the attachment for the ticket.
     return this.ticketsService.uploadAttachment(ticketId, file);
   }

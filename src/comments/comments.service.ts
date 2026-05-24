@@ -155,17 +155,19 @@ export class CommentsService {
   private async attachMentions(
     comment: Comment,
   ): Promise<Comment & { mentionedUsers: Array<{ id: number; username: string; fullName: string }> }> {
-    // Regex finds @username patterns to resolve mention metadata.
     const usernames = this.extractMentionedUsernames(comment.content);
 
     if (usernames.length === 0) {
       return { ...comment, mentionedUsers: [] };
     }
 
-    const users = await this.usersRepository.find({
-      where: { username: In(usernames) },
-      select: ['id', 'username', 'fullName'],
-    });
+    const lowerUsernames = usernames.map((u) => u.toLowerCase());
+
+    const users = await this.usersRepository
+      .createQueryBuilder('user')
+      .select(['user.id', 'user.username', 'user.fullName'])
+      .where('LOWER(user.username) IN (:...usernames)', { usernames: lowerUsernames })
+      .getMany();
 
     return {
       ...comment,

@@ -7,6 +7,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query
 } from '@nestjs/common';
 import { ApiBody, ApiOkResponse, ApiParam, ApiTags } from '@nestjs/swagger';
 import { User } from './user.entity';
@@ -30,6 +31,19 @@ export class UsersController {
   @ApiOkResponse({ type: User })
   findById(@Param('userId', ParseIntPipe) userId: number): Promise<User> {
     return this.usersService.findById(userId);
+  }
+
+  @Get(':userId/mentions')
+  @ApiParam({ name: 'userId', type: Number })
+  async getMentions(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const pageNumber = page ? parseInt(page, 10) : 1;
+    const pageSizeNumber = pageSize ? parseInt(pageSize, 10) : 10;
+    
+    return this.usersService.getMentions(userId, pageNumber, pageSizeNumber);
   }
 
   @Post()

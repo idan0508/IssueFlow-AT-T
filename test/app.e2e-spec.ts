@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
 import { AppModule } from './../src/app.module';
 
@@ -12,6 +12,7 @@ describe('AppController (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe());
     await app.init();
   });
 
@@ -701,7 +702,13 @@ describe('AppController (e2e)', () => {
           filename: 'test.txt',
           contentType: 'text/plain',
         })
-        .expect(200);
+        .expect((res) => {
+          if (res.status !== 200) {
+            throw new Error(
+              'Server rejected file: ' + JSON.stringify(res.body),
+            );
+          }
+        });
 
       expect(response.body.id).toBeDefined();
       expect(response.body.ticketId).toBe(ticketId);
@@ -747,7 +754,13 @@ describe('AppController (e2e)', () => {
           filename: 'test.txt',
           contentType: 'text/plain',
         })
-        .expect(200);
+        .expect((res) => {
+          if (res.status !== 200) {
+            throw new Error(
+              'Server rejected file: ' + JSON.stringify(res.body),
+            );
+          }
+        });
 
       const idToDelete = response.body.id as number;
 
@@ -951,6 +964,161 @@ describe('AppController (e2e)', () => {
       expect(logs).toHaveLength(1);
       expect(logs[0].action).toBe('CREATE');
       expect(logs[0].entityType).toBe('COMMENT');
+    });
+  });
+
+  // =========================================================================
+  // FEATURE 3.4 - TICKET EXPORT & IMPORT
+  // =========================================================================
+  describe('Feature 3.4 - Ticket Export & Import', () => {
+    const createUser = async (suffix: string) => {
+      const username = `user_${suffix}`;
+      const password = 'secret';
+      const response = await request(app.getHttpServer())
+        .post('/users')
+        .send({
+          username,
+          email: `${username}@example.com`,
+          fullName: 'Test User',
+          role: 'DEVELOPER',
+          password,
+        })
+        .expect(200);
+      return { id: response.body.id, username, password };
+    };
+
+    const login = async (username: string, password: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ username, password })
+        .expect(200);
+      return response.body.accessToken as string;
+    };
+
+    const createProject = async (accessToken: string, ownerId: number, name: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/projects')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ name, description: 'Export Import tests', ownerId })
+        .expect(200);
+      return response.body.id as number;
+    };
+
+    // Sub-test: Verifying tickets are properly exported to CSV format
+    it('successfully exports tickets for a project to a CSV string', async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_export`);
+      const accessToken = await login(user.username, user.password);
+      const projectId = await createProject(accessToken, user.id, 'Export Project');
+
+      // Create two tickets to populate the CSV
+      await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          title: 'Export ticket 1',
+          description: 'Desc 1',
+          status: 'TODO',
+          priority: 'LOW',
+          type: 'BUG',
+          projectId,
+          dueDate: new Date(Date.now() + 86400000).toISOString(),
+        })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          title: 'Export ticket 2',
+          description: 'Desc 2',
+          status: 'DONE',
+          priority: 'HIGH',
+          type: 'FEATURE',
+          projectId,
+          dueDate: new Date(Date.now() + 86400000).toISOString(),
+        })
+        .expect(200);
+
+      // Fetch the CSV export
+      const response = await request(app.getHttpServer())
+        .get(`/tickets/export?projectId=${projectId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      // Verify it's a CSV string and contains the correct headers and data
+      const csvData = response.text;
+      expect(typeof csvData).toBe('string');
+      expect(csvData).toContain('id,title,description,status,priority,type,dueDate,projectId,assigneeId,isOverdue');
+      expect(csvData).toContain('Export ticket 1');
+      expect(csvData).toContain('Export ticket 2');
+    });
+
+    // Sub-test: Verifying CSV import handles commas and quotes correctly
+    it('successfully imports tickets from CSV and handles internal commas in text', async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_import`);
+      const accessToken = await login(user.username, user.password);
+      const projectId = await createProject(accessToken, user.id, 'Import Project');
+
+      // Create a CSV string in memory. Notice the description is wrapped in quotes because it contains commas.
+      const csvContent = 
+`title,description,status,priority,type,dueDate,projectId,assigneeId
+Simple Ticket,Easy bug to fix,TODO,LOW,BUG,2026-05-01T00:00:00Z,${projectId},
+Complex Ticket,"A complex, annoying, and weird bug",IN_PROGRESS,HIGH,BUG,2026-05-01T00:00:00Z,${projectId},`;
+      
+      const buffer = Buffer.from(csvContent);
+
+      const response = await request(app.getHttpServer())
+        .post('/tickets/import')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .field('projectId', projectId)
+        .attach('file', buffer, 'import.csv')
+        .expect(200);
+
+      expect(response.body.created).toBe(2);
+      expect(response.body.failed).toBe(0);
+      expect(response.body.errors).toEqual([]);
+
+      // Verify the complex ticket was actually created with the correct description
+      const verifyResponse = await request(app.getHttpServer())
+        .get(`/tickets?projectId=${projectId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+        
+      const tickets = verifyResponse.body as Array<{title: string, description: string}>;
+      const complexTicket = tickets.find(t => t.title === 'Complex Ticket');
+      expect(complexTicket).toBeDefined();
+      expect(complexTicket?.description).toBe('A complex, annoying, and weird bug');
+    });
+
+    // Sub-test: Verifying invalid rows are skipped and reported while valid rows are saved
+    it('skips invalid rows and reports validation errors during import', async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_import_fail`);
+      const accessToken = await login(user.username, user.password);
+      const projectId = await createProject(accessToken, user.id, 'Partial Import Project');
+
+      // Row 2 is missing a title and has an invalid status.
+      const csvContent = 
+`title,description,status,priority,type,dueDate,projectId,assigneeId
+Valid Ticket,Will be saved,TODO,LOW,BUG,2026-05-01T00:00:00Z,${projectId},
+,Missing title and bad status,INVALID_STATUS,LOW,BUG,2026-05-01T00:00:00Z,${projectId},`;
+      
+      const buffer = Buffer.from(csvContent);
+
+      const response = await request(app.getHttpServer())
+        .post('/tickets/import')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .field('projectId', projectId)
+        .attach('file', buffer, 'partial.csv')
+        .expect(200);
+
+      expect(response.body.created).toBe(1);
+      expect(response.body.failed).toBe(1);
+      expect(response.body.errors).toHaveLength(1);
+      expect(response.body.errors[0]).toContain('Row 2');
+      expect(response.body.errors[0]).toContain('title is required');
     });
   });
 });

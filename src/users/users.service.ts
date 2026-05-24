@@ -1,9 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, ILike } from 'typeorm';
 import { User } from './user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { Comment } from '../comments/entities/comment.entity';
+
+const MENTION_REGEX = /@([a-zA-Z0-9_]+)/g;
 
 @Injectable()
 export class UsersService {
@@ -58,5 +61,52 @@ export class UsersService {
     if (!result.affected) {
       throw new NotFoundException(`User with ID ${id} not found`);
     }
+  }
+
+  async getMentions(userId: number, page: number = 1, pageSize: number = 10) {
+    const user = await this.findById(userId);
+
+    const skip = (page - 1) * pageSize;
+
+    const [comments, total] = await this.usersRepository.manager.findAndCount(Comment, {
+      where: { content: ILike(`%@${user.username}%`) },
+      order: { createdAt: 'DESC' },
+      skip,
+      take: pageSize,
+    });
+
+    
+    const data = await Promise.all(
+      comments.map(async (c) => {
+        const matches = c.content.matchAll(MENTION_REGEX);
+        const extractedUsernames = Array.from(new Set(Array.from(matches, (m) => m[1].toLowerCase())));
+
+        let mentionedUsers: Array<{ id: number; username: string; fullName: string }> = [];
+
+        if (extractedUsernames.length > 0) {
+          const users = await this.usersRepository
+            .createQueryBuilder('u')
+            .select(['u.id', 'u.username', 'u.fullName'])
+            .where('LOWER(u.username) IN (:...usernames)', { usernames: extractedUsernames })
+            .getMany();
+
+          mentionedUsers = users.map((u) => ({
+            id: u.id,
+            username: u.username,
+            fullName: u.fullName,
+          }));
+        }
+
+        return {
+          id: c.id,
+          ticketId: c.ticketId,
+          authorId: c.authorId,
+          content: c.content,
+          mentionedUsers,
+        };
+      }),
+    );
+
+    return { data, total, page };
   }
 }
