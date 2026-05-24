@@ -61,23 +61,49 @@ export class CommentsService {
   ): Promise<Comment & { mentionedUsers: Array<{ id: number; username: string; fullName: string }> }> {
     await this.ticketsService.findOne(ticketId);
 
-    const comment = await this.commentsRepository.findOne({
+    const existing = await this.commentsRepository.findOne({
       where: { id: commentId, ticketId },
     });
 
-    if (!comment) {
+    if (!existing) {
       throw new NotFoundException(`Comment with ID ${commentId} not found`);
     }
 
-    // Optimistic locking: reject updates that do not match the current version.
-    if (comment.version !== input.version) {
-      throw new ConflictException('Comment was updated by another user');
+    // Optimistic locking: update only if the version still matches.
+    const result = await this.commentsRepository
+      .createQueryBuilder()
+      .update(Comment)
+      .set({
+        content: input.content,
+        version: () => '"version" + 1',
+      })
+      .where('id = :id AND ticket_id = :ticketId AND version = :version', {
+        id: commentId,
+        ticketId,
+        version: input.version,
+      })
+      .execute();
+
+    if (!result.affected) {
+      const latest = await this.commentsRepository.findOne({
+        where: { id: commentId, ticketId },
+      });
+
+      throw new ConflictException({
+        message: 'Comment was updated by another user',
+        latestComment: latest ? await this.attachMentions(latest) : null,
+      });
     }
 
-    comment.content = input.content;
+    const updated = await this.commentsRepository.findOne({
+      where: { id: commentId, ticketId },
+    });
 
-    const saved = await this.commentsRepository.save(comment);
-    return this.attachMentions(saved);
+    if (!updated) {
+      throw new NotFoundException(`Comment with ID ${commentId} not found`);
+    }
+
+    return this.attachMentions(updated);
   }
 
   async remove(ticketId: number, commentId: number): Promise<void> {
