@@ -104,7 +104,7 @@ export class TicketsService {
       }
     }
 
-    const updated = this.ticketsRepository.merge(ticket, {
+    const updatePayload = {
       title: input.title,
       description: input.description,
       status: input.status,
@@ -118,10 +118,41 @@ export class TicketsService {
             ? { id: input.assigneeId }
             : null
           : ticket.assignee,
+    };
+
+    // Apply the update only if the version still matches to prevent lost updates.
+    const result = await this.ticketsRepository
+      .createQueryBuilder()
+      .update(Ticket)
+      .set({
+        ...updatePayload,
+        version: () => '"version" + 1',
+      })
+      .where('id = :id AND version = :version', { id, version: input.version })
+      .execute();
+
+    if (!result.affected) {
+      const latest = await this.ticketsRepository.findOne({
+        where: { id },
+        relations: { project: true, assignee: true },
+      });
+
+      throw new ConflictException({
+        message: 'Ticket updated by another user',
+        latestTicket: latest ? this.withIsOverdue(latest) : null,
+      });
+    }
+
+    const updated = await this.ticketsRepository.findOne({
+      where: { id },
+      relations: { project: true, assignee: true },
     });
 
-    const saved = await this.ticketsRepository.save(updated);
-    return this.withIsOverdue(saved);
+    if (!updated) {
+      throw new NotFoundException(`Ticket with ID ${id} not found`);
+    }
+
+    return this.withIsOverdue(updated);
   }
 
   async remove(id: number): Promise<void> {
