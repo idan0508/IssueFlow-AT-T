@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Header,
+  HttpCode,
   Param,
   ParseIntPipe,
   Patch,
@@ -44,6 +45,7 @@ export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
   @Post()
+  @HttpCode(200)
   @ApiOkResponse({
     schema: ticketWithOverdueSchema,
   })
@@ -114,6 +116,7 @@ export class TicketsController {
   }
 
   @Post('import')
+  @HttpCode(200)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Patch,
@@ -55,6 +56,7 @@ export class CommentsController {
   }
 
   @Post()
+  @HttpCode(200)
   @ApiOperation({ summary: 'Add a comment to a ticket' })
   @ApiOkResponse({
     schema: {

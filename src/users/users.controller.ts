@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Post,
@@ -32,6 +33,7 @@ export class UsersController {
   }
 
   @Post()
+  @HttpCode(200)
   @ApiBody({ type: CreateUserDto })
   @ApiOkResponse({ type: User })
   create(@Body() body: CreateUserDto): Promise<User> {
@@ -39,6 +41,7 @@ export class UsersController {
   }
 
   @Post('update/:userId')
+  @HttpCode(200)
   @ApiParam({ name: 'userId', type: Number })
   @ApiBody({ type: UpdateUserDto })
   @ApiOkResponse({ type: User })

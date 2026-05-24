@@ -194,4 +194,4 @@ Please update `src/tickets/tickets.controller.ts` and `src/tickets/helpers/ticke
 
 Keep the row-by-row error collecting and validation logic fully intact!
 
-### Comments 
+### Extended Features 

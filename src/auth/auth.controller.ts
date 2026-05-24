@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -22,6 +30,7 @@ export class AuthController {
   ) {}
 
   @Post('login')
+  @HttpCode(200)
   @ApiBody({ type: LoginDto })
   @ApiOkResponse({
     schema: {
@@ -57,6 +66,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @HttpCode(200)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({

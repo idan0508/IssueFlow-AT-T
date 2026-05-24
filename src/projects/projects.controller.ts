@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Patch,
@@ -38,6 +39,7 @@ export class ProjectsController {
   }
 
   @Post()
+  @HttpCode(200)
   @ApiOkResponse({ type: Project })
   create(@Body() body: CreateProjectDto): Promise<Project> {
     return this.projectsService.create(body);

@@ -223,7 +223,7 @@ export class TicketsService {
   }
 
   private withIsOverdue(ticket: Ticket): Ticket & { isOverdue: boolean } {
-    const dueTime = ticket.dueDate ? ticket.dueDate.getTime() : 0;
+    const dueTime = ticket.dueDate ? new Date(ticket.dueDate).getTime() : 0;
     const isOverdue =
       dueTime > 0 && dueTime < Date.now() && ticket.status !== TicketStatus.DONE;
 
