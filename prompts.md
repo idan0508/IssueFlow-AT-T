@@ -298,4 +298,28 @@ Add inline comments explaining that this is for Feature 3.2 dependencies. Do not
    - Import the `Attachment` entity.
    - Add `Attachment` to the `TypeOrmModule.forFeature([...])` array so its repository becomes available.
 
-Apply these database layer updates now.
+5.Implement "Feature 3.7 Auto-Scheduling Escalation Level on Tickets" in the existing NestJS application. Add clear, descriptive comments to all logically complex sections.
+
+Requirements:
+1. Setup: Enable `@nestjs/schedule` in the app if not already enabled. Create a scheduled Cron job (e.g., running every hour or minute).
+2. Query: Find all tickets where `dueDate` is strictly in the past, `status` is NOT 'DONE', and `isOverdue` is false.
+3. Auto-Escalation Logic: 
+   - Promote the ticket's priority by one level: LOW -> MEDIUM -> HIGH -> CRITICAL.
+   - If the priority is already CRITICAL (or just became CRITICAL), set the `isOverdue` flag to true. This ensures the process is idempotent and won't process this ticket again.
+   - Strictly DO NOT change the `status` field.
+4. Manual Override (PATCH /tickets/:id): Update the existing ticket update method. If the user's update payload includes a manual change to `priority`, you must automatically set `isOverdue` to false to reset the auto-escalation state.
+
+Provide the exact code required to implement this, including entity updates (if `isOverdue` is missing), the new Cron service, and the modification to the existing tickets service update method. Do not omit existing code logic.
+
+
+6.Based on the current test file and the recent implementation of Feature 3.7, generate ONLY the new `describe` block for "Feature 3.7 - Auto-Scheduling Escalation Level on Tickets" tests. Provide the code as a clean block in the chat window so I can append it manually. Do not change any existing tests.
+
+Important Testing Setup:
+Since this feature involves a Cron job (`TicketsEscalationService`), do not wait for the cron schedule. Instead, retrieve the service from the app instance (e.g., `app.get(TicketsEscalationService)`) and manually call `await escalationService.escalateOverdueTickets()` inside the tests to trigger the logic.
+
+Implement the following 5 specific test cases:
+1. Basic Escalation: Create a ticket with a past `dueDate` and `LOW` priority. Trigger the escalation service. Assert the priority is promoted to `MEDIUM` and `isOverdue` is `false`.
+2. Critical Threshold: Create a ticket with a past `dueDate` and `HIGH` priority. Trigger the escalation service. Assert the priority becomes `CRITICAL` and the `isOverdue` flag becomes `true`.
+3. Idempotency: Create a ticket with a past `dueDate`, `CRITICAL` priority, and `isOverdue: true`. Trigger the escalation service. Assert the ticket remains `CRITICAL` and `isOverdue` remains `true`.
+4. Ignore Valid/Done: Create one ticket with a future `dueDate` and another ticket with a past `dueDate` but status `DONE`. Trigger the service. Assert neither ticket's priority was changed.
+5. Manual Override Reset: Update an existing escalated ticket (e.g., `CRITICAL` and `isOverdue: true`) using a PATCH request to change its priority to `MEDIUM` (remember to pass the correct `version` for optimistic locking). Assert that the ticket's priority is updated AND `isOverdue` is reset to `false`.

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
 import { AppModule } from './../src/app.module';
+import { TicketsEscalationService } from '../src/tickets/tickets-escalation.service';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication;
@@ -613,6 +614,225 @@ describe('AppController (e2e)', () => {
   });
 
   // =========================================================================
+  // FEATURE 3.6 - MENTION MECHANISM IN COMMENTS
+  // =========================================================================
+  describe('Feature 3.6 - Mention Mechanism in Comments', () => {
+    let accessToken: string;
+    let ticketId: number;
+
+    const createUser = async (suffix: string) => {
+      const username = `user_${suffix}`;
+      const password = 'secret';
+
+      const response = await request(app.getHttpServer())
+        .post('/users')
+        .send({
+          username,
+          email: `${username}@example.com`,
+          fullName: `Test User ${suffix}`,
+          role: 'DEVELOPER',
+          password,
+        })
+        .expect(200);
+
+      return {
+        id: response.body.id,
+        username,
+        password,
+        fullName: `Test User ${suffix}`,
+      };
+    };
+
+    const login = async (username: string, password: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ username, password })
+        .expect(200);
+
+      return response.body.accessToken as string;
+    };
+
+    const createProject = async (ownerId: number, name: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/projects')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          name,
+          description: 'Mention tests',
+          ownerId,
+        })
+        .expect(200);
+
+      return response.body.id as number;
+    };
+
+    const createTicket = async (projectId: number) => {
+      const response = await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          title: 'Mention test ticket',
+          description: 'Ticket for mention tests',
+          status: 'TODO',
+          priority: 'LOW',
+          type: 'BUG',
+          projectId,
+          dueDate: new Date(Date.now() + 86400000).toISOString(),
+        })
+        .expect(200);
+
+      return response.body.id as number;
+    };
+
+    const createComment = async (
+      ticketIdToUse: number,
+      authorId: number,
+      content: string,
+    ) => {
+      const response = await request(app.getHttpServer())
+        .post(`/tickets/${ticketIdToUse}/comments`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          authorId,
+          content,
+        })
+        .expect(200);
+
+      return response.body as { id: number };
+    };
+
+    beforeEach(async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_mention_owner`);
+      accessToken = await login(user.username, user.password);
+      const projectId = await createProject(user.id, 'Mention Project');
+      ticketId = await createTicket(projectId);
+    });
+
+    // Sub-test: Verifying basic mention flow and metadata shape.
+    it('returns mentioned comment with mentionedUsers metadata', async () => {
+      const suffix = Date.now().toString();
+      const mentioned = await createUser(`${suffix}_mentioned`);
+
+      await createComment(ticketId, mentioned.id, `Hello @${mentioned.username}`);
+
+      const response = await request(app.getHttpServer())
+        .get(`/users/${mentioned.id}/mentions`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const body = response.body as {
+        data: Array<{
+          mentionedUsers?: Array<{ id: number; username: string; fullName: string }>;
+        }>;
+      };
+
+      const match = body.data.find((comment) =>
+        (comment.mentionedUsers ?? []).some((user) => user.id === mentioned.id),
+      );
+
+      expect(match).toBeDefined();
+      expect(match?.mentionedUsers).toEqual([
+        {
+          id: mentioned.id,
+          username: mentioned.username,
+          fullName: mentioned.fullName,
+        },
+      ]);
+    });
+
+    // Sub-test: Verifying mentions are matched case-insensitively.
+    it('matches mentions regardless of casing', async () => {
+      const suffix = Date.now().toString();
+      const mentioned = await createUser(`${suffix}_mixed`);
+      const mixedCase = `@${mentioned.username}`
+        .split('')
+        .map((char, index) =>
+          index % 2 === 0 ? char.toUpperCase() : char.toLowerCase(),
+        )
+        .join('');
+
+      await createComment(ticketId, mentioned.id, `Ping ${mixedCase}`);
+
+      const response = await request(app.getHttpServer())
+        .get(`/users/${mentioned.id}/mentions`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const body = response.body as {
+        data: Array<{ mentionedUsers?: Array<{ id: number }> }>;
+      };
+
+      const matched = body.data.some((comment) =>
+        (comment.mentionedUsers ?? []).some((user) => user.id === mentioned.id),
+      );
+
+      expect(matched).toBe(true);
+    });
+
+    // Sub-test: Verifying mentions update after comment edits.
+    it('re-evaluates mentions when a comment is updated', async () => {
+      const suffix = Date.now().toString();
+      const userA = await createUser(`${suffix}_user_a`);
+      const userB = await createUser(`${suffix}_user_b`);
+
+      const comment = await createComment(ticketId, userA.id, `Hello @${userA.username}`);
+
+      await request(app.getHttpServer())
+        .patch(`/tickets/${ticketId}/comments/${comment.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          content: `Switching to @${userB.username}`,
+          version: 1,
+        })
+        .expect(200);
+
+      const responseA = await request(app.getHttpServer())
+        .get(`/users/${userA.id}/mentions`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const responseB = await request(app.getHttpServer())
+        .get(`/users/${userB.id}/mentions`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const bodyA = responseA.body as { data: Array<{ id: number }> };
+      const bodyB = responseB.body as { data: Array<{ id: number }> };
+
+      const inUserA = bodyA.data.some((entry) => entry.id === comment.id);
+      const inUserB = bodyB.data.some((entry) => entry.id === comment.id);
+
+      expect(inUserA).toBe(false);
+      expect(inUserB).toBe(true);
+    });
+
+    // Sub-test: Verifying pagination, total count, and newest-first sorting.
+    it('returns paginated results sorted by newest first', async () => {
+      const suffix = Date.now().toString();
+      const mentioned = await createUser(`${suffix}_paged`);
+
+      const first = await createComment(ticketId, mentioned.id, `First @${mentioned.username}`);
+      const second = await createComment(ticketId, mentioned.id, `Second @${mentioned.username}`);
+      const third = await createComment(ticketId, mentioned.id, `Third @${mentioned.username}`);
+
+      const response = await request(app.getHttpServer())
+        .get(`/users/${mentioned.id}/mentions?page=1&pageSize=2`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const body = response.body as { data: Array<{ id: number }>; total: number };
+
+      expect(body.data).toHaveLength(2);
+      expect(body.total).toBe(3);
+
+      const returnedIds = body.data.map((entry) => entry.id);
+      expect(returnedIds).toEqual([third.id, second.id]);
+      expect(returnedIds).not.toContain(first.id);
+    });
+  });
+
+  // =========================================================================
   // FEATURE 3.3 - ATTACHMENT MANAGEMENT
   // =========================================================================
   describe('Feature 3.3 - Attachment Management', () => {
@@ -1119,6 +1339,204 @@ Valid Ticket,Will be saved,TODO,LOW,BUG,2026-05-01T00:00:00Z,${projectId},
       expect(response.body.errors).toHaveLength(1);
       expect(response.body.errors[0]).toContain('Row 2');
       expect(response.body.errors[0]).toContain('title is required');
+    });
+  });
+
+    // =========================================================================
+  // FEATURE 3.7 - AUTO-SCHEDULING ESCALATION LEVEL ON TICKETS
+  // =========================================================================
+  describe('Feature 3.7 - Auto-Scheduling Escalation Level on Tickets', () => {
+    let accessToken: string;
+    let projectId: number;
+
+    const createUser = async (suffix: string) => {
+      const username = `user_${suffix}`;
+      const password = 'secret';
+
+      const response = await request(app.getHttpServer())
+        .post('/users')
+        .send({
+          username,
+          email: `${username}@example.com`,
+          fullName: `Test User ${suffix}`,
+          role: 'DEVELOPER',
+          password,
+        })
+        .expect(200);
+
+      return { id: response.body.id as number, username, password };
+    };
+
+    const login = async (username: string, password: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ username, password })
+        .expect(200);
+
+      return response.body.accessToken as string;
+    };
+
+    const createProject = async (ownerId: number, name: string) => {
+      const response = await request(app.getHttpServer())
+        .post('/projects')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          name,
+          description: 'Escalation tests',
+          ownerId,
+        })
+        .expect(200);
+
+      return response.body.id as number;
+    };
+
+    const createTicket = async (options: {
+      title: string;
+      dueDate: string;
+      priority?: string;
+      status?: string;
+    }) => {
+      const response = await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          title: options.title,
+          description: 'Escalation test ticket',
+          status: options.status ?? 'TODO',
+          priority: options.priority ?? 'LOW',
+          type: 'BUG',
+          projectId,
+          dueDate: options.dueDate,
+        })
+        .expect(200);
+
+      return response.body as { id: number };
+    };
+
+    const getTicket = async (ticketId: number) => {
+      const response = await request(app.getHttpServer())
+        .get(`/tickets/${ticketId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      return response.body as { id: number; priority: string; isOverdue: boolean; version: number };
+    };
+
+    beforeEach(async () => {
+      const suffix = Date.now().toString();
+      const user = await createUser(`${suffix}_escalation_owner`);
+      accessToken = await login(user.username, user.password);
+      projectId = await createProject(user.id, 'Escalation Project');
+    });
+
+    // Sub-test: Verifying LOW escalates to MEDIUM without marking overdue.
+    it('promotes LOW to MEDIUM and keeps isOverdue false', async () => {
+      const pastDate = new Date(Date.now() - 86400000).toISOString();
+      const ticket = await createTicket({
+        title: 'Basic escalation ticket',
+        dueDate: pastDate,
+        priority: 'LOW',
+      });
+
+      const escalationService = app.get(TicketsEscalationService);
+      await escalationService.escalateOverdueTickets();
+
+      const updated = await getTicket(ticket.id);
+      expect(updated.priority).toBe('MEDIUM');
+      expect(updated.isOverdue).toBe(false);
+    });
+
+    // Sub-test: Verifying HIGH escalates to CRITICAL and sets isOverdue.
+    it('promotes HIGH to CRITICAL and sets isOverdue true', async () => {
+      const pastDate = new Date(Date.now() - 86400000).toISOString();
+      const ticket = await createTicket({
+        title: 'Critical threshold ticket',
+        dueDate: pastDate,
+        priority: 'HIGH',
+      });
+
+      const escalationService = app.get(TicketsEscalationService);
+      await escalationService.escalateOverdueTickets();
+
+      const updated = await getTicket(ticket.id);
+      expect(updated.priority).toBe('CRITICAL');
+      expect(updated.isOverdue).toBe(true);
+    });
+
+    // Sub-test: Verifying idempotent behavior for CRITICAL overdue tickets.
+    it('keeps CRITICAL overdue tickets unchanged on subsequent runs', async () => {
+      const pastDate = new Date(Date.now() - 86400000).toISOString();
+      const ticket = await createTicket({
+        title: 'Idempotent escalation ticket',
+        dueDate: pastDate,
+        priority: 'CRITICAL',
+      });
+
+      const escalationService = app.get(TicketsEscalationService);
+      await escalationService.escalateOverdueTickets();
+      await escalationService.escalateOverdueTickets();
+
+      const updated = await getTicket(ticket.id);
+      expect(updated.priority).toBe('CRITICAL');
+      expect(updated.isOverdue).toBe(true);
+    });
+
+    // Sub-test: Verifying future-due and DONE tickets are ignored.
+    it('ignores tickets that are not overdue or are DONE', async () => {
+      const futureDate = new Date(Date.now() + 86400000).toISOString();
+      const pastDate = new Date(Date.now() - 86400000).toISOString();
+
+      const futureTicket = await createTicket({
+        title: 'Future ticket',
+        dueDate: futureDate,
+        priority: 'LOW',
+      });
+
+      const doneTicket = await createTicket({
+        title: 'Done ticket',
+        dueDate: pastDate,
+        priority: 'LOW',
+        status: 'DONE',
+      });
+
+      const escalationService = app.get(TicketsEscalationService);
+      await escalationService.escalateOverdueTickets();
+
+      const futureUpdated = await getTicket(futureTicket.id);
+      const doneUpdated = await getTicket(doneTicket.id);
+
+      expect(futureUpdated.priority).toBe('LOW');
+      expect(doneUpdated.priority).toBe('LOW');
+    });
+
+    // Sub-test: Verifying manual priority update resets isOverdue.
+    it('resets isOverdue when priority is manually updated', async () => {
+      const pastDate = new Date(Date.now() - 86400000).toISOString();
+      const ticket = await createTicket({
+        title: 'Manual override ticket',
+        dueDate: pastDate,
+        priority: 'HIGH',
+      });
+
+      const escalationService = app.get(TicketsEscalationService);
+      await escalationService.escalateOverdueTickets();
+
+      const escalated = await getTicket(ticket.id);
+      expect(escalated.priority).toBe('CRITICAL');
+      expect(escalated.isOverdue).toBe(true);
+
+      await request(app.getHttpServer())
+        .patch(`/tickets/${ticket.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          priority: 'MEDIUM',
+          version: escalated.version,
+        })
+        .expect(200);
+
+      const updated = await getTicket(ticket.id);
+      expect(updated.priority).toBe('MEDIUM');
+      expect(updated.isOverdue).toBe(false);
     });
   });
 });

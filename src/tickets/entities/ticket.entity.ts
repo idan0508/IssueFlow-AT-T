@@ -62,6 +62,9 @@ export class Ticket {
   @Column({ type: 'timestamptz' })
   dueDate: Date;
 
+  @Column({ default: false })
+  isOverdue: boolean;
+
   // Every ticket belongs to a project; the FK is stored on the tickets table.
   @ManyToOne(() => Project, { nullable: false })
   project: Project;
@@ -70,7 +73,7 @@ export class Ticket {
   @ManyToOne(() => User, { nullable: true })
   assignee: User | null;
 
-  // Feature 3.3: Attachments stored for each ticket.
+  //  Attachments stored for each ticket.
   @OneToMany(() => Attachment, (attachment) => attachment.ticket)
   attachments: Attachment[];
 

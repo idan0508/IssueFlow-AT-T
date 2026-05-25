@@ -60,7 +60,7 @@ npm run test:e2e
 
 ---
 
-## 📝 Technical Notes & Architectural Insights
+##  Technical Notes & Architectural Insights
 
 ### 1. API Response Status (`201 Created` vs `200 OK`)
 
@@ -74,5 +74,36 @@ npm run test:e2e
 * The system's internal core validation (`withIsOverdue` engine inside `TicketsService`) has been fortified with programmatic instantiation (`new Date(ticket.dueDate)`) to naturally ensure seamless runtime evaluation for both pure database models and incoming transfer payloads.
 
 ```
-During development, some IDEs (like VS Code) may show a linter warning (dotted underline) on the supertest import or request usage. This is a known issue with TypeScript/Jest type definitions in this environment. The tests are fully functional and execute correctly via npm run test:e2e.
+
+---
+
+###  Troubleshooting: TypeScript E2E Testing Imports
+
+When running or writing E2E tests (`test/app.e2e-spec.ts`), you might encounter compatibility issues between the IDE's linter (like VS Code) and the testing runtime regarding the `supertest` library.
+
+#### The Symptoms:
+
+1. **Linter Warning:** A dotted red/yellow underline under the `supertest` import or the `request` function call.
+2. **Runtime Error:** Running `npm run test:e2e` fails with `TypeError: (0 , supertest_1.default) is not a function`.
+
+#### The Solution:
+
+Depending on how your environment and TypeScript configuration handle module resolution, use **one of the two following import styles** at the top of `test/app.e2e-spec.ts`:
+
+***Option A (Recommended if tests pass in Terminal but IDE shows warnings):**
+If your tests run successfully via `npm run test:e2e` but the IDE flags an error, keep this import. The runtime environment is correct, and the IDE warning can be safely ignored:
+ typescript
+import * as request from 'supertest';
+
+```
+* **Option B (Use if Option A throws `supertest_1.default is not a function` in the Terminal):**
+If the test suite completely crashes during execution due to module resolution, change the import statement to the following syntax:
+```typescript
+import request = require('supertest');
+
+```
+>**Note:** As long as `npm run test:e2e` returns a green `PASS` status in the terminal, the application behaves exactly as expected, and any remaining visual IDE syntax hints can be bypassed.
+
+---
+
 ```

@@ -45,6 +45,7 @@ export class TicketsService {
     userId: number,
   ): Promise<Ticket & { isOverdue: boolean }> {
     let assignee = input.assigneeId ? { id: input.assigneeId } : null;
+    const wasAutoAssigned = !input.assigneeId;
 
     if (!input.assigneeId) {
       assignee = await this.calculateOptimalAssignee(input.projectId);
@@ -71,6 +72,17 @@ export class TicketsService {
       userId,
       'USER',
     );
+
+    if (wasAutoAssigned && assignee) {
+      // Record system-triggered auto-assignment separately from user actions.
+      await this.auditLogsService.logAction(
+        'AUTO_ASSIGN',
+        'TICKET',
+        saved.id,
+        null,
+        'SYSTEM',
+      );
+    }
     return this.withIsOverdue(saved);
   }
 
@@ -169,6 +181,9 @@ export class TicketsService {
       }
     }
 
+    // Manual priority updates reset auto-escalation so the scheduler can re-evaluate.
+    const shouldResetOverdue = input.priority !== undefined;
+
     const updatePayload = {
       title: input.title,
       description: input.description,
@@ -176,6 +191,7 @@ export class TicketsService {
       priority: input.priority,
       type: input.type,
       dueDate: input.dueDate,
+      isOverdue: shouldResetOverdue ? false : ticket.isOverdue,
       project: input.projectId ? { id: input.projectId } : ticket.project,
       assignee:
         input.assigneeId !== undefined
@@ -458,6 +474,11 @@ export class TicketsService {
   private async calculateOptimalAssignee(
     projectId: number,
   ): Promise<{ id: number } | null> {
+    const project = await this.projectsRepository.findOne({
+      where: { id: projectId },
+      relations: { owner: true },
+    });
+
     const tickets = await this.ticketsRepository.find({
       where: { project: { id: projectId }, deletedAt: IsNull() },
       relations: { assignee: true },
@@ -468,9 +489,22 @@ export class TicketsService {
       { userId: number; username: string; openTicketCount: number }
     >();
 
-    // Workload counts open tickets only, while gathering developers assigned within the project.
+    // Seed only developers that belong to this project context to avoid cross-project assignment.
+    if (project?.owner?.role === UserRole.DEVELOPER) {
+      workloadMap.set(project.owner.id, {
+        userId: project.owner.id,
+        username: project.owner.username,
+        openTicketCount: 0,
+      });
+    }
+
+    // Count open tickets within the project for each developer assignee.
     for (const ticket of tickets) {
-      if (!ticket.assignee || ticket.assignee.role !== UserRole.DEVELOPER) {
+      if (!ticket.assignee) {
+        continue;
+      }
+
+      if (ticket.assignee.role !== UserRole.DEVELOPER) {
         continue;
       }
 
@@ -482,11 +516,13 @@ export class TicketsService {
         });
       }
 
+      const target = workloadMap.get(ticket.assignee.id);
+      if (!target) {
+        continue;
+      }
+
       if (ticket.status !== TicketStatus.DONE) {
-        const target = workloadMap.get(ticket.assignee.id);
-        if (target) {
-          target.openTicketCount += 1;
-        }
+        target.openTicketCount += 1;
       }
     }
 
@@ -500,7 +536,6 @@ export class TicketsService {
       return null;
     }
 
-    // TODO: Record in Audit Log (actor=SYSTEM, action=AUTO_ASSIGN)
     return { id: workloads[0].userId };
   }
 
@@ -508,10 +543,7 @@ export class TicketsService {
   // Overdue Helper
   // ==========================================
   private withIsOverdue(ticket: Ticket): Ticket & { isOverdue: boolean } {
-    const dueTime = ticket.dueDate ? new Date(ticket.dueDate).getTime() : 0;
-    const isOverdue =
-      dueTime > 0 && dueTime < Date.now() && ticket.status !== TicketStatus.DONE;
-
-    return { ...ticket, isOverdue };
+    // isOverdue is persisted by the escalation scheduler for idempotent processing.
+    return { ...ticket, isOverdue: Boolean(ticket.isOverdue) };
   }
 }
